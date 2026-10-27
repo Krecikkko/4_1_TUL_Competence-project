@@ -6,7 +6,10 @@
   "confidence": 0.94,
   "src_ip": "192.0.2.10",
   "dst_ip": "192.0.2.20",
+  "timestamp": "2026-10-20T18:30:10Z",
   "window_start": "2026-10-20T18:30:00Z",
-  "duration_seconds": 10
-  "explanation": "Source contacted 38 unique destination ports in 10 seconds.",
+  "duration_seconds": 10,
+  "feature_amount": 3,
+  "feature_list": [1,2,3],
+  "explanation": "Source contacted 38 unique destination ports in 10 seconds."
 }
