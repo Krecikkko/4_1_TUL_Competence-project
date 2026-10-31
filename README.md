@@ -44,6 +44,12 @@ cp .env.example .env
 
 Update `.env` with the required PostgreSQL and Django credentials.
 
+You can generate a Django secret key using Python:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(50))"
+```
+
 > **Note:** The `.env` file contains sensitive configuration and must not be committed to Git. Ensure it is included in `.gitignore`.
 
 ### 2. Start the platform
@@ -85,7 +91,7 @@ docker compose logs kafka-init
 Inspect Django backend logs:
 
 ```bash
-docker compose logs -f backend
+docker compose logs backend
 ```
 
 Inspect PostgreSQL logs:
