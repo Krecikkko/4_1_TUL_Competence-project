@@ -54,8 +54,31 @@ services:
       postgres:
         condition: service_healthy
 
+      migrate:
+        condition: service_completed_successfully
+
     networks:
       - netguard
+
+  migrate:
+    build: ./backend
+    command: python manage.py migrate --noinput
+
+    env_file:
+      - .env
+
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    networks:
+      - netguard
+
+    restart: "no"
 
 volumes:
   postgres_data:
