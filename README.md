@@ -32,24 +32,146 @@ netguard/
 
 ## Start / stop
 
-Run from the monorepo root:
+Run all commands from the monorepo root.
+
+### 1. Configure environment variables
+
+Create a local environment file from the provided template:
 
 ```bash
-cp .env.example .env   # optional
-# Starts the broker and runs the topic-init one-shot container
-docker compose up -d
-# Check the one-shot init job completed successfully
+cp .env.example .env
+```
+
+Update `.env` with the required PostgreSQL and Django credentials.
+
+You can generate a Django secret key using Python:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(50))"
+```
+
+> **Note:** The `.env` file contains sensitive configuration and must not be committed to Git. Ensure it is included in `.gitignore`.
+
+### 2. Start the platform
+
+Build and start all services (Kafka, PostgreSQL, and Django):
+
+```bash
+docker compose up --build -d
+```
+
+Docker Compose will:
+- Start the Kafka broker and execute the one-shot topic initializer (`kafka-init`).
+- Start PostgreSQL and wait until it becomes healthy.
+- Automatically apply Django database migrations.
+- Start the Django backend after its dependencies are ready.
+
+The Django backend runs in development mode with **automatic code reloading**. Changes to Python source files are reflected without manually restarting the container.
+
+> **Note:** Changes to `requirements.txt` or `Dockerfile` still require rebuilding the backend image:
+>
+> ```bash
+> docker compose up --build -d backend
+> ```
+
+### 3. Verify running services
+
+Check the status of all containers, including completed one-shot initialization jobs:
+
+```bash
 docker compose ps -a
+```
+
+Inspect Kafka topic initialization:
+
+```bash
 docker compose logs kafka-init
-# Show topics
+```
+
+Inspect Django backend logs:
+
+```bash
+docker compose logs backend
+```
+
+Inspect PostgreSQL logs:
+
+```bash
+docker compose logs postgres
+```
+
+### 4. Verify Kafka
+
+List available Kafka topics:
+
+```bash
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
-# Integration smoke test (Linux, macOS, WSL, Git Bash)
+```
+
+Run the Kafka integration smoke test (Linux, macOS, WSL, Git Bash):
+
+```bash
 bash infrastructure/kafka/smoke-test.sh
-# Stop without removing Kafka history
+```
+
+### 5. Verify Django
+
+Once the backend is running, access the Django API at:
+
+```text
+http://localhost:8000/
+```
+
+Verify health-check endpoint at:
+
+```text
+http://localhost:8000/api/health/
+```
+
+Django database migrations are executed automatically during startup, so no manual migration command is required.
+
+### 6. Create a Django superuser (first-time setup, optional)
+
+To access the Django administration panel, create a superuser:
+
+```bash
+docker compose exec backend python manage.py createsuperuser
+```
+
+Follow the prompts to configure the administrator account.
+
+The Django administration panel is available at:
+
+```text
+http://localhost:8000/admin/
+```
+
+**Important:** Store the superuser credentials securely. For local development, you may save them in a file named `django-suser.txt` in the project root. Do not commit administrator credentials to the repository.
+
+Superuser creation is only required once, provided the PostgreSQL database volume is preserved.
+
+### 7. Stop the platform
+
+Stop and remove running containers while preserving PostgreSQL data and Kafka history:
+
+```bash
 docker compose down
 ```
 
-**To reset local Kafka data** (destructive): `docker compose down -v`.
+Restart the platform later using:
+
+```bash
+docker compose up -d
+```
+
+To rebuild images after changing dependencies or Docker configuration:
+
+```bash
+docker compose up --build -d
+```
+
+> **Warning:** Avoid running `docker compose down -v` unless you explicitly intend to delete persistent data. The `-v` flag removes Compose-managed volumes, including PostgreSQL database storage and Kafka history.
+
 
 ## Topics — aligned to the communication diagram
 
