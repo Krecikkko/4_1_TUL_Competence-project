@@ -1,6 +1,7 @@
 from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
+from math import floor
 
 from core.models import (
     TimeWindow,
@@ -16,28 +17,37 @@ class Command(BaseCommand):
         now = timezone.now()
 
         # Time windows
-        windows: list[TimeWindow] = []
-
-        for i, window_type in enumerate(TimeWindow.WindowType):
+        def gen_time_window(time_delta_min: int, window_type: TimeWindow.WindowType):
             window, _ = TimeWindow.objects.get_or_create(
-                start_timestamp_us=now - timedelta(minutes=i),
-                duration_us=timedelta(minutes=1, seconds=30),
+                start_timestamp_us=now - timedelta(minutes=time_delta_min),
+                duration_us=timedelta(minutes=1, seconds=31, microseconds=3),
                 type=window_type,
             )
-            windows.append(window)
+            return window
+
+        windows: list[TimeWindow] = []
+
+        windows.append(gen_time_window(0, TimeWindow.WindowType.GLOBAL))
+
+        for i, window_type in enumerate(TimeWindow.WindowType):
+            windows.append(gen_time_window(i+1, window_type))
+
+        windows.append(gen_time_window(50, TimeWindow.WindowType.SOURCE))
 
         # Network flows
         flows: list[NetworkFlow] = []
 
         for i in range(40):
+            i_halved = floor(i / 2)
+
             flow, _ = NetworkFlow.objects.get_or_create(
-                source_ip=f"192.168.1.{i + 10}",
-                destination_ip=f"10.0.0.{i + 1}",
-                source_port=50000 + i,
+                start_timestamp_us=now - timedelta(seconds=6*i),
+                source_ip=f"192.168.1.{i_halved + 10}",
+                destination_ip=f"10.0.0.{i_halved + 1}",
+                source_port=50000 + i_halved,
                 destination_port=443,
                 protocol="TCP",
                 defaults={
-                    "start_timestamp_us": now - timedelta(seconds=6*i),
                     "duration_us": timedelta(seconds=1, microseconds=2),
                     "packet_count": 100 + i * 10,
                     "byte_count": 5000 + i * 100,
@@ -75,12 +85,12 @@ class Command(BaseCommand):
             Detection.objects.create(
                 method="TEST",
                 rule_id=f"TEST-{i + 1}",
-                detected_at_us=now,
-                type="ANOMALY",
+                detected_at_us=now - timedelta(minutes=i),
+                type=f"ANOMALY-{i + 1}",
                 severity=severity,
                 confidence=0.75 + i * 0.05,
-                source_ip="192.168.1.10",
-                destination_ip="10.0.0.1",
+                source_ip=f"192.168.1.{1+i}",
+                destination_ip=f"10.0.0.{1+i}",
                 key_feature_values={
                     "packet_count": 150,
                     "byte_count": 7500,

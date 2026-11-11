@@ -1,5 +1,7 @@
+from datetime import datetime
+
 from django.db.models.aggregates import Count, Sum
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.views.decorators.http import require_GET
 from django.shortcuts import get_object_or_404
 
@@ -24,25 +26,20 @@ def flows(request, pk=None):
 
         return JsonResponse(serializer.data)
 
-    queryset = NetworkFlow.objects.all().order_by("id")
-
-    serializer = NetworkFlowSerializer(queryset, many=True)
+    # multiple
+    flows = NetworkFlow.objects.all()
+    serializer = NetworkFlowSerializer(flows, many=True)
 
     return JsonResponse({
-        "count": queryset.count(),
+        "count": flows.count(),
         "results": serializer.data,
     })
 
 @require_GET
 def flow_windows(request, pk):
     flow = get_object_or_404(NetworkFlow, pk=pk)
-
-    windows = flow.time_windows.all().order_by("id")
-
-    serializer = TimeWindowSerializer(
-        windows,
-        many=True,
-    )
+    windows = flow.time_windows.all()
+    serializer = TimeWindowSerializer(windows, many=True)
 
     return JsonResponse({
         "count": windows.count(),
@@ -55,26 +52,23 @@ def flow_windows(request, pk):
 def windows(request, pk=None):
     if pk is not None:
         window = get_object_or_404(TimeWindow, pk=pk)
-
         serializer = TimeWindowSerializer(window)
 
         return JsonResponse(serializer.data)
 
-    queryset = TimeWindow.objects.all().order_by("id")
-
-    serializer = TimeWindowSerializer(queryset, many=True)
+    # multiple
+    windows = TimeWindow.objects.all()
+    serializer = TimeWindowSerializer(windows, many=True)
 
     return JsonResponse({
-        "count": queryset.count(),
+        "count": windows.count(),
         "results": serializer.data,
     })
 
 @require_GET
 def window_flows(request, pk):
     window = get_object_or_404(TimeWindow, pk=pk)
-
-    flows = window.network_flows.all().order_by("id")
-
+    flows = window.network_flows.all()
     serializer = NetworkFlowSerializer(flows, many=True)
 
     return JsonResponse({
@@ -126,13 +120,12 @@ def window_statistics(request, pk):
 @require_GET
 def window_detection(request, pk):
     window = get_object_or_404(TimeWindow, pk=pk)
+    serializer = DetectionSerializer(window.detection, many=True)
 
-    serializer = DetectionSerializer(
-        window.detection,
-        many=True,
-    )
+    if len(serializer.data) == 0:
+        raise Http404("Window doesn't have a detection")
 
-    return JsonResponse(serializer.data, safe=False)
+    return JsonResponse(serializer.data[0], safe=False)
 
 # DETECTIONS
 
@@ -140,72 +133,67 @@ def window_detection(request, pk):
 def detections(request, pk=None):
     if pk is not None:
         detection = get_object_or_404(Detection, pk=pk)
-
         serializer = DetectionSerializer(detection)
 
         return JsonResponse(serializer.data)
 
-    queryset = Detection.objects.select_related(
-        "window"
-    ).all()
+    # multiple
+    detections = Detection.objects.all()
 
-    # start = request.GET.get("start_timestamp_us")
-    # end = request.GET.get("end_timestamp_us")
+    #filters
+    start = request.GET.get("start_timestamp_us")
+    end = request.GET.get("end_timestamp_us")
 
-    # if start:
-    #     timestamp = parse_datetime(start)
+    if start:
+        try:
+            timestamp = datetime.fromisoformat(start)
+        except ValueError:
+            return JsonResponse(
+                {"error": "Invalid start_timestamp_us"},
+                status=400,
+            )
 
-    #     if timestamp is None:
-    #         return JsonResponse(
-    #             {"error": "Invalid start_timestamp_us"},
-    #             status=400,
-    #         )
+        detections = detections.filter(detected_at_us__gte=timestamp)
 
-    #     queryset = queryset.filter(detected_at_us__gte=timestamp)
+    if end:
+        try:
+            timestamp = datetime.fromisoformat(end)
 
-    # if end:
-    #     timestamp = parse_datetime(end)
+        except ValueError:
+            return JsonResponse(
+                {"error": "Invalid end_timestamp_us"},
+                status=400,
+            )
 
-    #     if timestamp is None:
-    #         return JsonResponse(
-    #             {"error": "Invalid end_timestamp_us"},
-    #             status=400,
-    #         )
+        detections = detections.filter(detected_at_us__lte=timestamp)
 
-    #     queryset = queryset.filter(detected_at_us__lte=timestamp)
+    filters = [
+        "type",
+        "severity",
+        "source_ip",
+        "destination_ip"
+    ]
 
-    # filters = {
-    #     "type": "type",
-    #     "severity": "severity",
-    #     "source_ip": "source_ip",
-    #     "destination_ip": "destination_ip",
-    #     "method": "method",
-    # }
+    for filter in filters:
+        value = request.GET.get(filter)
 
-    # for parameter, field in filters.items():
-    #     value = request.GET.get(parameter)
+        if value:
+            detections = detections.filter(**{filter: value})
 
-    #     if value:
-    #         queryset = queryset.filter(**{field: value})
-
-    queryset = queryset.order_by("id")
-
+    # serializer & return
     serializer = DetectionSerializer(
-        queryset,
+        detections,
         many=True,
     )
 
     return JsonResponse({
-        "count": queryset.count(),
+        "count": detections.count(),
         "results": serializer.data,
     })
 
 @require_GET
 def detection_window(request, pk):
     detection = get_object_or_404(Detection, pk=pk)
-
-    serializer = TimeWindowSerializer(
-        detection.window
-    )
+    serializer = TimeWindowSerializer(detection.window)
 
     return JsonResponse(serializer.data)
