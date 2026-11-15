@@ -59,7 +59,7 @@ All paths in this guide are relative to the **repository root** (the directory w
 | Topic | Content | Publisher | Reader(s) | Default key |
 | --- | --- | --- | --- | --- |
 | `flows.normalized` | `FlowEvent` v1 (one normalized unidirectional flow) | Flow processor | Analysis workers; flow persistence | `src_ip` (proposed) |
-| `detections.created` | `DetectionEvent` v1 (a detection *candidate*) | Analysis workers | Backend classification/persistence | `detection_id` (proposed) |
+| `detections.created` | `DetectionEvent` v1 (a detection *candidate*) | Analysis workers | Backend classification/persistence | `src_ip` (proposed) |
 
 Current development topic settings:
 
@@ -135,7 +135,7 @@ python contracts/kafka/validate.py \
   --topic flows.normalized --file /path/to/my-flow.json
 ```
 
-The contract requires `schema_version: 1`. The file name `.v1.schema.json` identifies the matching schema. Validation catches missing fields, wrong types, invalid IPs/timestamps and other schema rules. Some **semantic rules** (e.g., exact time-window duration, non-TCP `tcp_flags`) are checked by `examples/kafka/common.py` when using the demo clients. Every real module must use equivalent business-level validation, even if implemented in Java, Python, or another language.
+Messages carry no version field; the file name `.v1.schema.json` identifies the matching schema. Validation catches missing or extra fields, wrong types, invalid IPs/timestamps and other schema rules. Some **semantic rules** (a detection `timestamp` not preceding `window_start`, non-TCP `tcp_flags` being `null`) are checked by `examples/kafka/common.py` when using the demo clients. Every real module must use equivalent business-level validation, even if implemented in Java, Python, or another language.
 
 ## 7. Send and receive a real Kafka message — reproducible demo
 
@@ -158,7 +158,7 @@ python examples/kafka/consumer.py \
 python examples/kafka/producer.py --topic flows.normalized
 ```
 
-Expected producer output starts with `DELIVERED topic=flows.normalized`; consumer output starts with `RECEIVED topic=flows.normalized`. Partition and offset values can vary. If the consumer's unique group reads an older retained message first, that's normal for `auto.offset.reset=earliest`; for an exact sample match, use an otherwise empty test topic/environment or correlate with `event_id`.
+Expected producer output starts with `DELIVERED topic=flows.normalized`; consumer output starts with `RECEIVED topic=flows.normalized`. Partition and offset values can vary. If the consumer's unique group reads an older retained message first, that's normal for `auto.offset.reset=earliest`; for an exact sample match, use an otherwise empty test topic/environment or compare the whole payload (v1 messages carry no `event_id`).
 
 Repeat the same process for the detection topic:
 
@@ -219,27 +219,27 @@ Produce **laboratory** data only. The importer validates PCAP/flow inputs; the s
 ### Flow Processor (publishes `flows.normalized`)
 
 1. Normalize to a **unidirectional** flow with fields required by `flow-event.v1.schema.json`.
-2. Set a stable `flow_id`, unique emission `event_id`, and correlation `trace_id`. Carry dataset/run provenance when present.
-3. Assign `schema_version=1`; validate before send. Use UTF-8 JSON.
+2. Send only the ten contract fields. Dataset/run provenance and ground-truth labels are **not** part of the message; keep them in separate metadata or an evaluation store.
+3. Validate before send. Use UTF-8 JSON.
 4. Produce to `flows.normalized`; proposed Kafka key is `src_ip`.
-5. Wait for delivery acknowledgement; log topic/partition/offset and correlation IDs, avoiding secrets and sensitive contents.
+5. Wait for delivery acknowledgement; log topic/partition/offset and the flow 5-tuple, avoiding secrets and sensitive contents.
 6. Set timestamp fields consistently, preferably RFC 3339 UTC; agree on byte-counting and flow timeout conventions.
 
 ### Analysis workers (consume flows; publish detections)
 
 1. Both instances subscribe to `flows.normalized` with `group.id=netguard-analysis`.
-2. Validate input; **remove `scenario_label` before any decision logic** (see `prepare_flow_for_detection` in the sample).
+2. Validate input. Flows carry no ground-truth label; `prepare_flow_for_detection` in the sample still strips `scenario_label` as a defensive guard.
 3. Aggregate the mandated **1 s, 10 s and 60 s** windows and run deterministic rules plus a statistical/ML method.
 4. Use configured grouping and late-event policies. **Proposed key `src_ip` does not by itself support complete destination-grouped DoS analysis.** Document repartitioning/state-sharing strategy before claiming full detection coverage.
-5. Publish a validated `DetectionEvent` to `detections.created`, key `detection_id`, preserving traceability and `related_flow_ids`.
+5. Publish a validated `DetectionEvent` to `detections.created`, key `src_ip` (proposed). v1 detections cannot list contributing flows; they relate to flows only through `src_ip`, `dst_ip` and the window (`window_start`, `duration_seconds`).
 6. Only commit consumed offsets after the required processing/output step succeeds; implement a recovery strategy for failures between output publication and commit.
 
 ### Backend (two independent Kafka roles + REST API)
 
 - Flow persistence consumer (`group.id=netguard-flow-persistence`) reads `flows.normalized` and stores normalized flow history.
 - Detection consumer (`group.id=netguard-detection-persistence`) reads `detections.created`, performs **final classification/severity assignment**, stores evidence and all mandatory alert fields, and exposes them through REST endpoints.
-- A `DetectionEvent` is a candidate, **not** a guaranteed final alert. Its `confidence` is required; its `severity` may be omitted or preliminary.
-- Use idempotent writes keyed by stable IDs; database success must precede offset commit. Details of transaction/retry behavior require agreement.
+- A `DetectionEvent` is a candidate, **not** a guaranteed final alert. Its `confidence` and `severity` are required; `severity` is the analysis worker's preliminary value.
+- Use idempotent writes; messages carry no IDs, so deduplicate on a natural key. Message fields are renamed when stored (see the backend mapping in `contracts/kafka/README.md`). Database success must precede offset commit. Details of transaction/retry behavior require agreement.
 
 ### Frontend
 
@@ -249,32 +249,29 @@ Call the backend REST API for current traffic, alerts, history and filters. The 
 
 Maintain Compose, broker/topic initialization, contracts, CI validation, isolated test fixtures, broker/consumer diagnostics, and repeatable integration/performance tests. Keep the default broker local-only (PLAINTEXT for lab use); do not expose Kafka publicly.
 
-## 9. Message lifecycle, IDs, and responsibility boundaries
+## 9. Message contents and responsibility boundaries
 
-| Field | Meaning | Owner / guidance |
+v1 messages contain only measured data; there are **no identifiers** (`event_id`, `flow_id`, `trace_id`, `detection_id`), no version field, no provenance and no ground-truth label.
+
+| Message | Fields (all required) | Producer |
 | --- | --- | --- |
-| `schema_version` | Contract revision (v1 = integer 1). | All producers |
-| `event_id` | Identifier of a published event. | Producer; stable for replay/retry of same logical event |
-| `flow_id` | Normalized flow identity. | Flow Processor |
-| `trace_id` | Joins logs/events across modules. | Originating ingestion path; propagate unchanged |
-| `detection_id` | Identity of an anomaly detection. | Analysis worker; stable across retry |
-| `related_flow_ids` | Flow evidence for a detection. | Analysis worker |
-| `scenario_label` | **Ground-truth label**, not an input feature. | Dataset/simulator evaluation tooling only |
+| `FlowEvent` | `start_time`, `duration_ms`, `src_ip`, `src_port`, `dst_ip`, `dst_port`, `protocol`, `packets`, `bytes`, `tcp_flags` | Flow Processor |
+| `DetectionEvent` | `type`, `method`, `rule_id`, `severity`, `confidence`, `src_ip`, `dst_ip`, `timestamp`, `window_start`, `duration_seconds`, `features` (`[{name, value}]`), `explanation` | Analysis worker |
 
-`FlowEvent` fields include source/destination IP and ports, protocol, timestamps, duration, packet/byte counts, optional TCP flags, and provenance. `DetectionEvent` includes detection type, method (`RULE` / `STATISTICAL` / `ML`), confidence (0–1), window, feature values, explanation and related flow IDs. See the canonical JSON Schemas for the **exact required/optional field list**; this prose is not an alternative contract.
+Ground-truth scenario labels are used by evaluation tooling only and must be kept outside Kafka messages. See the canonical JSON Schemas for the **exact required/optional field list**; this prose is not an alternative contract.
 
 **Key behavioral rules:**
 
-- `tcp_flags` must be null or absent for non-TCP flows; absent values must not be confused with zero.
-- Time-window `duration_seconds` must be one of `1`, `10`, or `60`; application validation must also check `end - start = duration_seconds` and chronological consistency.
-- Keep correlation and timing metadata in all stages. Benchmark latency is measured from **data acceptance to detection creation**, not UI rendering.
+- `tcp_flags` is always present and must be `null` for non-TCP flows; `null` must not be confused with zero. Ports are `null` for protocols without ports.
+- Time-window `duration_seconds` must be one of `1`, `10`, or `60`; application validation must also check that `timestamp` does not precede `window_start`.
+- Keep timing metadata in all stages. Benchmark latency is measured from **data acceptance to detection creation**, not UI rendering.
 - Retention is finite and Kafka is not the long-term source of truth; backend persists required history.
 
 ## 10. Handling errors and restarts
 
 **Delivery semantics:** Assume *at least once*, not exactly once. Producer idempotence and `acks=all` reduce certain duplicate send risks; they **do not** eliminate duplicate downstream processing, and replication factor 1 has no broker-node fault tolerance.
 
-- **Producer:** validate first; retry transient connection errors with bounded backoff; report/track permanent failures. Preserve logical IDs when retrying the same event.
+- **Producer:** validate first; retry transient connection errors with bounded backoff; report/track permanent failures. Retrying the same event produces an identical payload; consumers must deduplicate on content.
 - **Consumer:** validate message; perform business logic; commit offset **only after success**. The Python example prints a message and commits; a real backend must finish its durable write before committing.
 - **Bad input:** do not silently discard or endlessly crash on one poison pill. Team must define retry limit, quarantine/DLQ policy and operator visibility. No DLQ topic is configured in the starter.
 - **Late/out-of-order flows:** decide event-time versus processing-time, allowed lateness and window finalization. JSON Schema cannot determine window correctness for your algorithm.
@@ -289,9 +286,9 @@ Maintain Compose, broker/topic initialization, contracts, CI validation, isolate
 | Container cannot connect to `localhost:9094` | Loopback points to itself | Use `kafka:9092`; ensure service is on `netguard` network |
 | `UNKNOWN_TOPIC_OR_PART` | Topic missing/misspelled | Run initializer; list topics; auto-create is off |
 | Consumer receives nothing | New consumer group/offset position, wrong topic, partitions owned by another group member | Group info; topic; offsets; use dedicated group |
-| Consumer receives an older example | Unique group starts from `earliest` | Compare `event_id`; know retention/offset settings |
+| Consumer receives an older example | Unique group starts from `earliest` | Compare the payload; know retention/offset settings |
 | Validation error | Payload doesn't match v1 contract / semantic rule | Run validator; inspect schema and sample JSON |
-| Duplicate alerts after restart | At-least-once delivery and non-idempotent writes | Stable IDs, transaction boundaries, deduplication |
+| Duplicate alerts after restart | At-least-once delivery and non-idempotent writes | Natural-key deduplication, transaction boundaries |
 | Throughput/latency degrades | High consumer lag, CPU pressure, network/storage bottleneck | Group lag, resource usage, timestamps, logs |
 
 Useful commands (repository root):
@@ -313,7 +310,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
 docker compose config
 ```
 
-Consumer lag is meaningful only for groups that have committed offsets; a brand-new or idle group may not appear as expected. Logs should include `trace_id`, `event_id`, `flow_id`/`detection_id`, topic, partition, offset, processing stage and clear error context. Do not log credentials or production traffic. Optional Kafka UI can help developers, but is **not** part of the current starter.
+Consumer lag is meaningful only for groups that have committed offsets; a brand-new or idle group may not appear as expected. Logs should include topic, partition, offset, the flow 5-tuple or detection `type`/`src_ip`/`window_start`, processing stage and clear error context. Do not log credentials or production traffic. Optional Kafka UI can help developers, but is **not** part of the current starter.
 
 ## 12. Test plan: what we have and what remains
 
@@ -335,7 +332,7 @@ Consumer lag is meaningful only for groups that have committed offsets; a brand-
 - [ ] Each module uses correct bootstrap address and topic.
 - [ ] Two analysis workers use one consumer group; independent persistence uses different group(s).
 - [ ] Producer validates before publishing; consumer validates before processing.
-- [ ] Example event can be traced with stable IDs from producer to persistence.
+- [ ] Example event can be traced from producer to persistence (by content, since v1 has no IDs).
 - [ ] Ground truth never influences detector outputs.
 - [ ] Lateness, grouping, deduplication and offset-commit policies documented.
 - [ ] Errors and restarts tested with lab fixtures.
@@ -350,8 +347,10 @@ These are **team decisions**, not claims that NetGuard has already implemented t
 3. Byte counting, flow timeout, and connection-counting definitions.
 4. Retries, DLQ/quarantine, invalid message handling, and offset commits when output or DB writes fail.
 5. Final severity mapping, detection deduplication identity, and evidence/history retention.
-6. Schema evolution procedure (new `.v2.schema.json` and `schema_version=2`; coordinated rollout because v1 uses `additionalProperties: false`).
-7. Local benchmark hardware, observability metrics, evaluation datasets and performance acceptance records.
+6. Whether messages need identifiers (deduplication, tracing detections back to flows); v1 has none.
+7. How the backend stores flows with `null` ports or `tcp_flags` (`NetworkFlow` currently requires them).
+8. Schema evolution procedure (new `.v2.schema.json`; messages carry no version field, so roll out in coordination, e.g. via a new topic, because v1 uses `additionalProperties: false`).
+9. Local benchmark hardware, observability metrics, evaluation datasets and performance acceptance records.
 
 ## 14. Security and project boundaries
 
