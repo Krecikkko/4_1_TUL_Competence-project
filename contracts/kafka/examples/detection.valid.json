@@ -17,7 +17,7 @@
     {
       "name": "unique_dest_ips",
       "value": 20
-    },
-  ]
+    }
+  ],
   "explanation": "Source contacted 38 unique destination ports in 10 seconds."
 }

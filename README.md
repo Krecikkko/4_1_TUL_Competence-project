@@ -182,7 +182,7 @@ docker compose up --build -d
 
 Topic names are established by the provided **Message broker communication diagram**. Partition counts, consumer-group IDs, and retention are **proposed technical defaults**, not mandatory project requirements. The backend classifies and persists detections after consuming detection events, as shown in that diagram. If the implementation team chooses to publish fully classified records instead, update the contract and diagram together.
 
-**IMPORTANT:** The network-flow model is detailed in *Test Data and Demonstration Environment*, section 3. Payload format, event versioning, and detection-candidate schema need team agreement; this starter does not invent them. Preserve `flow_id` / event / trace correlation metadata and event timestamps across Kafka and storage. Never expose simulation ground-truth labels as detector features.
+**IMPORTANT:** The network-flow model is detailed in *Test Data and Demonstration Environment*, section 3. The Kafka payload formats are defined in `contracts/kafka/` (fields mirror the backend models; v1 messages carry no identifiers or version field). Preserve event timestamps across Kafka and storage. Never expose simulation ground-truth labels as detector features.
 
 ## Connection settings
 

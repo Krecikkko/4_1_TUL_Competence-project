@@ -19,7 +19,7 @@ The files above are an **additive patch** to the existing repository. They depen
 2. Validates both v1 schemas and checks that the deliberately invalid flow example is rejected.
 3. Runs the offline unit tests (including semantic checks beyond JSON Schema).
 4. Boots the existing single-node Kafka container and runs the existing topic initialization job.
-5. Creates a unique Kafka consumer group for each integration case, waits for partition assignment, then publishes and reads one **new uniquely identified** event in each topic. Confirms the decoded payload, key, partition, offset, and trace ID, and commits after validation. Also checks `scenario_label` is removed before detector-facing processing.
+5. Creates a unique Kafka consumer group for each integration case, waits for partition assignment, then publishes and reads one **unique** event in each topic (v1 messages have no IDs, so the test sets a fresh `start_time`/`src_port` on the flow and a run token in the detection `explanation`, then matches on the whole payload). Confirms the decoded payload, key, partition and offset, and commits after validation. Also checks `prepare_flow_for_detection` leaves no `scenario_label`.
 6. Dumps broker logs on failure and runs `docker compose down -v` to clean the **ephemeral GitHub-hosted CI runner**.
 
 This is a real Kafka integration test, but **not** proof that all NetGuard application services work together; it does not measure 5,000 flows/s, p95 latency, resilience, API security, persistence, or detector accuracy. These require separate suites.
@@ -54,7 +54,7 @@ Run the tests only in a lab/development Kafka instance: they add test messages t
 
 ## Consumer groups and delivery expectations
 
-The test uses per-run `netguard-ci-<uuid>` groups to avoid taking partitions from `netguard-analysis` or backend persistence groups. It uses `auto.offset.reset=latest` **only after** waiting for partition assignment, preventing a first-subscription race; fixture messages carry fresh `event_id`s. Consumers turn off auto-commit and manually commit after verification.
+The test uses per-run `netguard-ci-<uuid>` groups to avoid taking partitions from `netguard-analysis` or backend persistence groups. It uses `auto.offset.reset=latest` **only after** waiting for partition assignment, preventing a first-subscription race; each run publishes a payload made unique by a per-run token. Consumers turn off auto-commit and manually commit after verification.
 
 The test cannot guarantee exactly-once business processing; application services still need idempotency and recovery rules. CI uses uniquely generated identifiers to allow repeated runs.
 
