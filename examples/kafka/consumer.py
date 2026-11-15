@@ -49,8 +49,8 @@ def main():
                 raise
             safe_payload = (prepare_flow_for_detection(payload) if args.topic == 'flows.normalized' else payload)
             print(f'RECEIVED topic={record.topic()} partition={record.partition()} offset={record.offset()} '
-                  f'key={record.key().decode("utf-8") if record.key() else None} '
-                  f'event_id={payload["event_id"]}\n{json.dumps(safe_payload, indent=2)}', flush=True)
+                  f'key={record.key().decode("utf-8") if record.key() else None}\n'
+                  f'{json.dumps(safe_payload, indent=2)}', flush=True)
             # A real service commits only after the business operation/persistence succeeds.
             consumer.commit(message=record, asynchronous=False)
             count += 1

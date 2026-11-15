@@ -37,7 +37,7 @@ def main():
     if errors or remaining or not delivered:
         raise KafkaException(f'Delivery failed: errors={errors}, pending={remaining}')
     topic, partition, offset = delivered[0]
-    print(f'DELIVERED topic={topic} partition={partition} offset={offset} key={key} event_id={message["event_id"]}')
+    print(f'DELIVERED topic={topic} partition={partition} offset={offset} key={key}')
 
 
 if __name__ == '__main__':

@@ -8,5 +8,5 @@
   "protocol": "TCP",
   "packets": 15,
   "bytes": 6200,
-  "tcp_flags": 24,
+  "tcp_flags": 24
 }

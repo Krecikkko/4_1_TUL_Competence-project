@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -27,12 +28,12 @@ def test_produce_consume_real_kafka(topic, filename):
     """Verify real producer delivery, group subscription, JSON, key, and trace data."""
     payload = json.loads((CONTRACTS / 'examples' / filename).read_text(encoding='utf-8'))
     token = uuid.uuid4().hex
-    payload['event_id'] = f'ci-event-{token}'
-    payload['trace_id'] = f'ci-trace-{token}'
+    # v1 events carry no identifiers, so make this run's payload unique and match on it.
     if topic == 'flows.normalized':
-        payload['flow_id'] = f'ci-flow-{token}'
+        payload['start_time'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+        payload['src_port'] = 1024 + int(token[:8], 16) % 64512
     else:
-        payload['detection_id'] = f'ci-detection-{token}'
+        payload['explanation'] = f'{payload["explanation"]} [ci-{token}]'
     validate(topic, payload)
     key = kafka_key(topic, payload)
 
@@ -79,19 +80,18 @@ def test_produce_consume_real_kafka(topic, filename):
             if record.error():
                 raise KafkaException(record.error())
             decoded = json.loads(record.value().decode('utf-8'))
-            if decoded.get('event_id') != payload['event_id']:
+            if decoded != payload:
                 continue  # Other CI runs / test writers might use the same topic.
             assert record.topic() == topic
             assert record.key() == key.encode('utf-8')
             assert record.partition() == sent.partition()
             assert record.offset() == sent.offset()
             assert validate(topic, decoded) == payload
-            assert decoded['trace_id'] == payload['trace_id']
             if topic == 'flows.normalized':
                 assert 'scenario_label' not in prepare_flow_for_detection(decoded)
             consumer.commit(message=record, asynchronous=False)
             print(f'PASS {topic} partition={record.partition()} offset={record.offset()}')
             return
-        pytest.fail(f'Timed out receiving our event_id={payload["event_id"]} on {topic}')
+        pytest.fail(f'Timed out receiving our ci-{token} payload on {topic}')
     finally:
         consumer.close()
