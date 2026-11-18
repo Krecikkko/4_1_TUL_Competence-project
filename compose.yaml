@@ -3,8 +3,11 @@ name: netguard
 include:
   - path: infrastructure/kafka/compose.yaml
 
-# Future application services can be added below. Compose merges services
-# from the included Kafka file into the same project and network.
+# Core platform: kafka (+ kafka-init), postgres, migrate, backend, frontend.
+# All services share the `netguard` network (declared in the included Kafka
+# file), so containers reach each other by service name:
+#   kafka:9092, postgres:5432, backend:8000, frontend:80
+# Future modules (e.g. analysis, importer) are added below in the same way.
 
 services:
 
@@ -46,6 +49,7 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
 
     ports:
       - "127.0.0.1:8000:8000"
@@ -56,6 +60,42 @@ services:
 
       migrate:
         condition: service_completed_successfully
+
+      kafka:
+        condition: service_healthy
+
+      kafka-init:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/', timeout=3)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+    networks:
+      - netguard
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:3000:80"
+
+    depends_on:
+      backend:
+        condition: service_healthy
 
     networks:
       - netguard
