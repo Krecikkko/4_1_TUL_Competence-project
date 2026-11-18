@@ -133,7 +133,7 @@ export const FlowDetailPage: React.FC = () => {
               {flow.source_ip}
             </div>
             <div className="text-xs font-mono text-slate-400 mt-1">
-              Port: <strong className="text-slate-200">{flow.source_port}</strong>
+              Port: <strong className="text-slate-200">{flow.source_port ?? 'n/a'}</strong>
             </div>
           </div>
 
@@ -161,7 +161,7 @@ export const FlowDetailPage: React.FC = () => {
               {flow.destination_ip}
             </div>
             <div className="text-xs font-mono text-slate-400 mt-1">
-              Port: <strong className="text-slate-200">{flow.destination_port}</strong>
+              Port: <strong className="text-slate-200">{flow.destination_port ?? 'n/a'}</strong>
             </div>
           </div>
         </div>

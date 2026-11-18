@@ -93,11 +93,16 @@ export const NetworkFlowTable: React.FC<NetworkFlowTableProps> = ({
       {
         id: 'source',
         header: 'Source (IP:Port)',
-        accessorFn: (row) => `${row.source_ip}:${row.source_port}`,
+        accessorFn: (row) =>
+          row.source_port === null ? row.source_ip : `${row.source_ip}:${row.source_port}`,
         cell: ({ row }) => (
           <span className="font-mono text-xs text-emerald-400 font-medium">
-            {row.original.source_ip}:
-            <span className="text-emerald-300">{row.original.source_port}</span>
+            {row.original.source_ip}
+            {row.original.source_port !== null && (
+              <>
+                :<span className="text-emerald-300">{row.original.source_port}</span>
+              </>
+            )}
           </span>
         ),
       },
@@ -109,11 +114,18 @@ export const NetworkFlowTable: React.FC<NetworkFlowTableProps> = ({
       {
         id: 'destination',
         header: 'Destination (IP:Port)',
-        accessorFn: (row) => `${row.destination_ip}:${row.destination_port}`,
+        accessorFn: (row) =>
+          row.destination_port === null
+            ? row.destination_ip
+            : `${row.destination_ip}:${row.destination_port}`,
         cell: ({ row }) => (
           <span className="font-mono text-xs text-indigo-400 font-medium">
-            {row.original.destination_ip}:
-            <span className="text-indigo-300">{row.original.destination_port}</span>
+            {row.original.destination_ip}
+            {row.original.destination_port !== null && (
+              <>
+                :<span className="text-indigo-300">{row.original.destination_port}</span>
+              </>
+            )}
           </span>
         ),
       },
