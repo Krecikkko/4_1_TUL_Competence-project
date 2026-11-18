@@ -10,3 +10,4 @@ build/
 *.pyc
 .venv/
 django-suser.txt
+.vscode/
