@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 @dataclass
@@ -18,5 +18,5 @@ class AlertData:
     timestamp: str = ""
     window_start: str = ""
     duration_seconds: int = 0
-    features: List[DetectionFeature] = []
+    features: List[DetectionFeature] = field(default_factory=list)
     explanation: str = ""
