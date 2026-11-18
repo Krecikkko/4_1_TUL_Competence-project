@@ -13,8 +13,9 @@ netguard/
 │       ├── compose.yaml               # broker and one-off topic initializer
 │       ├── init-topics.sh             # desired topic inventory
 │       └── smoke-test.sh              # broker and produce/consume test
-├── backend/                           # future REST API + persistence consumers
-├── frontend/                          # future dashboard
+├── compose.override.yaml              # dev-only: backend hot reload (auto-loaded)
+├── backend/                           # Django REST API (+ future persistence consumers)
+├── frontend/                          # React dashboard (nginx in Docker)
 ├── modules/
 │   ├── pcap-importer/                 # future importer
 │   ├── flow-processor/                # future normalization/features
@@ -54,7 +55,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(50))"
 
 ### 2. Start the platform
 
-Build and start all services (Kafka, PostgreSQL, and Django):
+Build and start all services (Kafka, PostgreSQL, Django backend, and frontend):
 
 ```bash
 docker compose up --build -d
@@ -64,7 +65,17 @@ Docker Compose will:
 - Start the Kafka broker and execute the one-shot topic initializer (`kafka-init`).
 - Start PostgreSQL and wait until it becomes healthy.
 - Automatically apply Django database migrations.
-- Start the Django backend after its dependencies are ready.
+- Start the Django backend after its dependencies (PostgreSQL, migrations, Kafka topics) are ready.
+- Start the frontend once the backend is healthy.
+
+| Service | URL from your host | Address from other containers |
+|---|---|---|
+| Frontend (dashboard) | http://localhost:3000 | `frontend:80` |
+| Backend (Django API) | http://localhost:8000/api/ | `backend:8000` |
+| Kafka | `localhost:9094` | `kafka:9092` |
+| PostgreSQL | not published | `postgres:5432` |
+
+The frontend's nginx proxies `/api/` to `backend:8000`, so the browser only talks to port 3000.
 
 The Django backend runs in development mode with **automatic code reloading**. Changes to Python source files are reflected without manually restarting the container.
 
@@ -216,7 +227,7 @@ services:
 
 Once implemented, run multiple instances with `docker compose up -d --scale analysis=2` (do not use `container_name` on the analysis service). Both instances must use the same Kafka consumer group ID; the flow-persistence consumer must use a **different** group to receive its own copy of every flow. Kafka guarantees ordering **within a partition only**; select a stable flow-related record key after defining the window grouping strategy.
 
-Create additional Docker services for the importer, simulator, backend, database, and frontend. They can share the declared `netguard` network. The frontend should call backend REST APIs; it should not connect directly to Kafka.
+Backend, database, frontend and Kafka are already defined; add the importer, simulator and analysis services the same way. They share the declared `netguard` network. The frontend should call backend REST APIs; it should not connect directly to Kafka.
 
 ## Semantics and limitations
 

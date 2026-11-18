@@ -114,11 +114,11 @@ docker run -p 3000:80 netguard-frontend
 ```
 
 ### Integrated Docker Compose deployment:
-Use the additive compose file from the monorepo root:
+The frontend is part of the root `compose.yaml`. From the monorepo root:
 ```bash
-docker compose -f compose.yaml -f compose.override.yaml -f compose.frontend.yaml up -d
+docker compose up --build -d
 ```
-The frontend will be available at `http://localhost:3000`.
+The frontend will be available at `http://localhost:3000`. nginx serves the built app and proxies `/api/` to the `backend` container, so `VITE_API_BASE_URL` stays empty.
 
 ---
 
