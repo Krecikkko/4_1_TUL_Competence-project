@@ -29,18 +29,19 @@ def validate(topic, message):
         raise ValueError('tcp_flags must be null/omitted for non-TCP flows')
     if topic == 'detections.created':
         from datetime import datetime
-        w = message['window']
-        start = datetime.fromisoformat(w['start'].replace('Z', '+00:00'))
-        end = datetime.fromisoformat(w['end'].replace('Z', '+00:00'))
-        if (end - start).total_seconds() != w['duration_seconds']:
-            raise ValueError('window length does not match duration_seconds')
+        window_start = datetime.fromisoformat(message['window_start'].replace('Z', '+00:00'))
+        detected_at = datetime.fromisoformat(message['timestamp'].replace('Z', '+00:00'))
+        if detected_at < window_start:
+            raise ValueError('timestamp must not precede window_start')
     return message
 
 
 def kafka_key(topic, message):
-    return message['src_ip'] if topic == 'flows.normalized' else message['detection_id']
+    # Both topics are keyed by source IP: preserves per-source ordering.
+    return message['src_ip']
 
 
 def prepare_flow_for_detection(message):
-    """Ground truth must never reach detector decision logic."""
+    """Ground truth must never reach detector decision logic. FlowEvent v1 no longer
+    carries scenario_label; the filter stays as a defensive guard."""
     return {key: value for key, value in message.items() if key not in {'scenario_label'}}
