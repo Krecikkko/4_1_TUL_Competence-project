@@ -7,8 +7,8 @@ This document describes what the code does. It is not an aspiration.
 Architecture position (NetGuard Application Architecture, *Ingestion Tier*):
 
 ```text
-prepared PCAP / flow files ──► [PCAP/Flow Importer] ──► FlowEvent v1 JSON-lines ──► (Flow Processor publishes to
-                                 this subsystem                                     Kafka flows.normalized — not here)
+prepared PCAP / flow files ──► [PCAP/Flow Importer] ──┬─► FlowEvent v1 JSON-lines (+ provenance, report)
+                                 this subsystem         └─► Kafka flows.normalized (optional, key = src_ip)
 ```
 
 | Component | Module | Responsibility |
@@ -24,12 +24,12 @@ prepared PCAP / flow files ──► [PCAP/Flow Importer] ──► FlowEvent v1
 | Validation | `validation.py` | Cross-field rules applied identically to both sources |
 | Contract | `contract.py` | JSON Schema check against the repository's `flow-event.v1.schema.json` |
 | Output | `output.py` | Atomic per-ingestion directory and ingestion catalogue |
+| Kafka sink | `kafka_sink.py` | Optional publishing of each FlowEvent to `flows.normalized`, per-ingestion delivery accounting |
 | Model / errors / ids | `model.py`, `errors.py`, `ids.py` | Data contract, error codes, deterministic identifiers |
 
 **Out of scope, not implemented:** traffic simulation or any synthetic data,
 time-window features (pps, bps, connections per window, unique ports or IPs, new-connection
-rate), detection, alerting, persistence, REST API, dashboard, Kafka publishing
-(output is JSON-lines files only), and live capture.
+rate), detection, alerting, persistence, REST API, dashboard and live capture.
 
 ## 2. Supported capture formats
 
@@ -76,8 +76,9 @@ Optional fields:
 * `dataset_id`: kept as `source_dataset_id`.
 * `simulation_run_id`: any value causes rejection.
 
-The FlowEvent envelope fields `schema_version`, `event_id`, `trace_id`,
-`ingest_time` and `features` are deliberately ignored. Any other column is
+The legacy FlowEvent envelope fields `schema_version`, `event_id`, `trace_id`,
+`ingest_time` and `features` (from exports made before the slim v1 contract)
+are deliberately ignored. Any other column is
 reported as unmapped (in the report and as a warning) and is not imported.
 
 **Mapping profiles** (`--mapping <name|file.json>`) make schema mapping explicit:
@@ -269,25 +270,28 @@ extension headers, transport header and payload. For each packet the count is
 
 ## 11. Output flow schema (FlowEvent v1, one JSON object per line)
 
+The message carries exactly the ten fields of the slim FlowEvent v1 contract
+(`additionalProperties: false`), in contract order:
+
 ```json
-{"schema_version":1,"event_id":"evt-cd9870b0-…","trace_id":"ing-4ef5252a…","flow_id":"flow-b1296b01-…",
- "ingest_time":"2026-10-30T18:30:18.257026Z","start_time":"2010-01-07T19:38:34.341715Z","duration_ms":132.768,
- "src_ip":"172.16.16.128","src_port":2826,"dst_ip":"212.58.226.142","dst_port":80,"protocol":"TCP",
- "packets":2,"bytes":92,"tcp_flags":18,"source_type":"PCAP","dataset_id":"tcp_handshake-681bcc3526ad",
- "simulation_run_id":null,"scenario_label":null}
+{"start_time":"2010-01-07T19:38:34.341715Z","duration_ms":132.768,"src_ip":"172.16.16.128","src_port":2826,
+ "dst_ip":"212.58.226.142","dst_port":80,"protocol":"TCP","packets":2,"bytes":92,"tcp_flags":18}
 ```
 
 (This is a real output line from `tests/data/pcap/tcp_handshake.pcapng`.)
 
-Identifiers:
+Identifiers and labels are **not** part of the message. They are written to the
+matching line of `provenance.jsonl` (same order as `flows.jsonl`):
 * `flow_id` = `flow-` + UUIDv5(file SHA-256, first packet index, key), or for
   datasets UUIDv5(file SHA-256, record number). It is deterministic.
-* `event_id` = UUIDv5(`flow_id`). It is deterministic, so consumers can
-  deduplicate re-imports.
-* `trace_id` = `ingestion_id` (`ing-<uuid4>`). It links the flow to its
-  `report.json`, provenance and logs.
-* `ingest_time` = the ingestion start time.
-* `features` is never emitted, because that is downstream work.
+* `ingestion_id` (`ing-<uuid4>`) links the flow to its `report.json` and logs.
+* `dataset_id`, `source_type`, and `scenario_label` (ground truth, never sent
+  to the detector).
+
+When publishing to Kafka, `flow_id`, `ingestion_id`, `source_type` and
+`dataset_id` are also sent as message headers (`netguard-flow-id`,
+`netguard-ingestion-id`, `netguard-source-type`, `netguard-dataset-id`).
+`scenario_label` is never published.
 
 ## 12. Integration interfaces
 
@@ -295,10 +299,18 @@ Identifiers:
 * **Output (designated interface)**: `flows.jsonl`. Each line is a FlowEvent v1
   message for topic `flows.normalized`. It is validated against the shared schema
   in `contracts/kafka/`, and also, in the tests, with the repository's existing
-  helper `examples/kafka/common.validate`. Publishing to Kafka is outside this
-  module, which writes JSON-lines only. Persistence belongs to the backend
+  helper `examples/kafka/common.validate`. Persistence belongs to the backend
   tier, so no database is used.
-* **Traceability**: `trace_id` and `flow_id` lead to `provenance.jsonl`, and from
+* **Kafka (optional)**: when bootstrap servers are configured, every flow written
+  to `flows.jsonl` is also produced to `flows.normalized` (idempotent producer,
+  `acks=all`, key `src_ip` as in `examples/kafka/common.kafka_key`, so one
+  source's flows stay ordered on one partition). Each ingestion flushes at its
+  end; `report.json` → `kafka` records produced/delivered/failed counts, and an
+  incomplete delivery adds a warning and makes the CLI exit with code 4. Flows
+  are published as they are produced, so a run that fails midway may already
+  have published some flows; its files are still complete and traceable.
+* **Traceability**: the Kafka headers (or the line position in `flows.jsonl`)
+  give `flow_id` and `ingestion_id`; these lead to `provenance.jsonl`, and from
   there to the packet index and file offset (PCAP) or the record and line number
   (dataset). Together with `report.json` (SHA-256, file and configuration) this
   makes a flow traceable to its exact origin.
@@ -325,7 +337,6 @@ Identifiers:
   The outer header is used, or the packet is rejected.
 * TCP connection semantics (FIN/RST, port reuse inside the idle timeout) do not
   split flows.
-* Kafka publishing is not part of this module (JSON-lines output only).
 * Only the `netguard-native` profile is built in. Other public dataset schemas
   need a custom mapping profile. Bidirectional dataset records (for example
   CICFlowMeter) cannot be mapped to unidirectional flows by a profile alone.

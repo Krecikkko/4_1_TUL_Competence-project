@@ -147,7 +147,7 @@ If you see `OK`, you're done.
 
 ## 5. Starting Kafka
 
-The module connects to Kafka at **`localhost:9094`**. Kafka runs in Docker and is started from the **repository root** (not from `modules/analysis`).
+The module connects to Kafka at **`localhost:9094`** by default (override with the `KAFKA_BOOTSTRAP_SERVERS` environment variable, e.g. `kafka:9092` inside the compose network). Kafka runs in Docker and is started from the **repository root** (not from `modules/analysis`).
 
 Open a **second terminal window** and run:
 

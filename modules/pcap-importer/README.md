@@ -9,8 +9,12 @@ onwards).
 It converts **actual** prepared captures (pcap / pcapng) and prepared
 NetGuard-native flow datasets (CSV / JSON-lines) into normalised,
 **unidirectional** flows serialised as **FlowEvent v1**
-(`contracts/kafka/flow-event.v1.schema.json`, topic `flows.normalized`), written
-as JSON-lines files.
+(`contracts/kafka/flow-event.v1.schema.json`, topic `flows.normalized`): exactly
+the ten contract fields per message. They are written as JSON-lines files and,
+when Kafka bootstrap servers are configured, also published to
+`flows.normalized` (key `src_ip`). Identifiers go to `provenance.jsonl` and
+Kafka headers; ground-truth labels only to `provenance.jsonl`. Neither is ever
+in the message itself.
 
 > It never generates, simulates or fabricates traffic. If no input is given, or
 > an input contains nothing convertible, it says so explicitly
@@ -24,6 +28,11 @@ python -m pip install -r requirements-dev.txt
 python -m netguard_ingest pcap tests/data/pcap/tcp_handshake.pcapng --output-dir ./ingestion-output
 python -m netguard_ingest list --output-dir ./ingestion-output
 python -m pytest
+
+# also publish to Kafka (repository stack running):
+python -m netguard_ingest pcap tests/data/pcap/dns.cap --kafka-bootstrap-servers localhost:9094
+# or, from the repository root, in Docker (captures in ./data/pcap-input):
+docker compose run --rm pcap-importer
 ```
 
 ## Documentation
@@ -49,8 +58,10 @@ modules/pcap-importer/
 │   ├── normalize.py        # value normalisation rules
 │   ├── validation.py       # cross-field flow rules (same for every source)
 │   ├── contract.py         # FlowEvent v1 JSON Schema check (repo contract)
+│   ├── kafka_sink.py       # optional publishing to flows.normalized
 │   ├── model.py, errors.py, ids.py, output.py, config.py, logging_setup.py
 ├── tests/                  # pytest suite + genuine captures in tests/data/pcap
+├── Dockerfile              # used by the `pcap-importer` compose service
 ├── scripts/fetch_test_pcaps.sh
 └── docs/
 ```

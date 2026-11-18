@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from conftest import genuine, read_jsonl
+from conftest import genuine, native_records, read_jsonl
 
 from netguard_ingest.config import IngestionConfig
 from netguard_ingest.pipeline import ingest_flow_dataset, ingest_pcap
@@ -26,7 +26,7 @@ def genuine_events(tmp_path_factory):
     events = []
     for name in ("v6.pcap", "dns.cap", "icmp_echo.pcapng", "tcp-ecn-sample.pcap", "tcp_handshake.pcapng"):
         result = ingest_pcap(genuine(name), IngestionConfig(output_root=out))
-        events.extend(read_jsonl(result.output_dir / "flows.jsonl"))
+        events.extend(native_records(result.output_dir))
     assert len(events) > 80
     return events
 
@@ -46,7 +46,7 @@ def write_jsonl(path, rows):
 
 
 def imported(result):
-    return read_jsonl(result.output_dir / "flows.jsonl")
+    return native_records(result.output_dir)
 
 
 def rejects(result):

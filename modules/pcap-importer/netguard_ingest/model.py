@@ -1,5 +1,8 @@
 """Common NetGuard flow model (Test Data and Demonstration Environment, sec. 3)
 and its FlowEvent v1 serialisation (contracts/kafka/flow-event.v1.schema.json).
+
+The internal model carries provenance fields (flow_id, source_type,
+scenario_label, dataset_id) that the slim FlowEvent v1 contract does not.
 """
 from __future__ import annotations
 
@@ -7,9 +10,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any
-
-FLOW_EVENT_SCHEMA_VERSION = 1
-
 
 class Protocol(str, Enum):
     """Normalised protocol identifiers (FlowEvent v1 ``protocol`` enum)."""
@@ -64,16 +64,18 @@ class NormalizedFlow:
     scenario_label: str | None
     dataset_id: str | None = None
 
-    def to_flow_event(self, *, event_id: str, trace_id: str, ingest_time: datetime) -> dict[str, Any]:
-        """Serialise to a FlowEvent v1 JSON object (field order follows the contract)."""
+    def to_flow_event(self) -> dict[str, Any]:
+        """Serialise to a FlowEvent v1 JSON object.
+
+        Exactly the ten fields of ``contracts/kafka/flow-event.v1.schema.json``
+        (``additionalProperties: false``). Identifiers and provenance
+        (``flow_id``, ``dataset_id``, ``scenario_label``, ``source_type``) are
+        not part of the contract; they go to ``provenance.jsonl`` and to the
+        Kafka message headers.
+        """
         from .normalize import format_timestamp  # local import avoids a cycle
 
         return {
-            "schema_version": FLOW_EVENT_SCHEMA_VERSION,
-            "event_id": event_id,
-            "trace_id": trace_id,
-            "flow_id": self.flow_id,
-            "ingest_time": format_timestamp(ingest_time),
             "start_time": format_timestamp(self.start_time),
             "duration_ms": self.duration_ms,
             "src_ip": self.src_ip,
@@ -84,8 +86,4 @@ class NormalizedFlow:
             "packets": self.packets,
             "bytes": self.bytes,
             "tcp_flags": self.tcp_flags,
-            "source_type": self.source_type.value,
-            "dataset_id": self.dataset_id,
-            "simulation_run_id": None,
-            "scenario_label": self.scenario_label,
         }

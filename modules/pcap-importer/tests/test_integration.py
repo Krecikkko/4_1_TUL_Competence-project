@@ -6,7 +6,7 @@ import json
 import sys
 
 import pytest
-from conftest import ALL, MODULE_ROOT, genuine, read_jsonl
+from conftest import ALL, FLOW_EVENT_FIELDS, MODULE_ROOT, genuine, read_jsonl
 
 from netguard_ingest.capture.decoder import PacketDecoder
 from netguard_ingest.capture.reader import CaptureReader
@@ -30,10 +30,12 @@ def test_every_genuine_capture_ingests_with_consistent_accounting(name, config):
     assert len(flows) == len(provenance) == report["flows"]["normalized"] == report["flows"]["extracted"]
     assert sum(f["packets"] for f in flows) == packets["attributed_to_flows"]
     assert len(read_jsonl(out / "rejects.jsonl")) == report["rejections"]["total"]
-    for flow in flows:
+    for flow, prov in zip(flows, provenance):
         repo_contract_validate("flows.normalized", flow)          # existing repo FlowEvent v1 contract
-        assert flow["source_type"] == "PCAP" and flow["scenario_label"] is None
-        assert flow["start_time"].endswith("Z") and flow["trace_id"] == result.ingestion_id
+        assert list(flow) == FLOW_EVENT_FIELDS                    # slim contract: nothing more, nothing less
+        assert flow["start_time"].endswith("Z")
+        assert prov["ingestion_id"] == result.ingestion_id and prov["source_type"] == "PCAP"
+        assert prov["scenario_label"] is None and prov["dataset_id"] == report["source"]["dataset_id"]
     assert report["source"]["sha256"] and report["source"]["original_filename"] == name
     assert not list(config.output_root.glob(".*.partial"))
 
@@ -44,9 +46,8 @@ def test_provenance_traces_flow_to_its_first_packet(config):
     with CaptureReader(path) as reader:
         by_index = {p.index: p for p in reader}
     decoder = PacketDecoder()
-    flows = {f["flow_id"]: f for f in read_jsonl(result.output_dir / "flows.jsonl")}
-    for prov in read_jsonl(result.output_dir / "provenance.jsonl"):
-        flow = flows[prov["flow_id"]]
+    flows = read_jsonl(result.output_dir / "flows.jsonl")
+    for flow, prov in zip(flows, read_jsonl(result.output_dir / "provenance.jsonl"), strict=True):
         packet = by_index[prov["first_packet_index"]]
         meta = decoder.decode(packet.link_type, packet.data, packet.wirelen)
         assert (meta.src_ip, meta.src_port, meta.dst_ip, meta.dst_port) == \
@@ -61,8 +62,8 @@ def test_repeatable_processing(config):
     assert first.ingestion_id != second.ingestion_id
 
     def stable(result):
-        return [{k: v for k, v in f.items() if k not in ("trace_id", "ingest_time")}
-                for f in read_jsonl(result.output_dir / "flows.jsonl")]
+        flow_ids = [p["flow_id"] for p in read_jsonl(result.output_dir / "provenance.jsonl")]
+        return read_jsonl(result.output_dir / "flows.jsonl"), flow_ids
     assert stable(first) == stable(second)
 
 
@@ -83,9 +84,12 @@ def test_file_errors_produce_failed_report(tmp_path, config, setup, code):
 def test_operator_scenario_label(config):
     cfg = IngestionConfig(output_root=config.output_root, scenario_label="PORT_SCAN", dataset_id="pp-synscan")
     result = ingest_pcap(genuine("synscan.pcapng"), cfg)
-    flows = read_jsonl(result.output_dir / "flows.jsonl")
-    assert {f["scenario_label"] for f in flows} == {"PORT_SCAN"} and {f["dataset_id"] for f in flows} == {"pp-synscan"}
-    assert {p["scenario_label_origin"] for p in read_jsonl(result.output_dir / "provenance.jsonl")} == {"operator"}
+    provenance = read_jsonl(result.output_dir / "provenance.jsonl")
+    assert {p["scenario_label"] for p in provenance} == {"PORT_SCAN"}
+    assert {p["dataset_id"] for p in provenance} == {"pp-synscan"}
+    assert {p["scenario_label_origin"] for p in provenance} == {"operator"}
+    # ground truth never leaks into the published FlowEvents
+    assert all("scenario_label" not in f for f in read_jsonl(result.output_dir / "flows.jsonl"))
     bad = IngestionConfig(output_root=config.output_root, scenario_label="HACKED")
     assert ingest_pcap(genuine("synscan.pcapng"), bad).status == "FAILED"
 

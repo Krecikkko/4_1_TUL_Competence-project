@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "dpkt==1.9.8",
     "jsonschema[format]>=4.23,<5",
+    "confluent-kafka>=2.6,<3",
 ]
 
 [project.optional-dependencies]

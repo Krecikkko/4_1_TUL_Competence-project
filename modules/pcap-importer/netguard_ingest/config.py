@@ -16,6 +16,7 @@ DEFAULT_MAX_ACTIVE_FLOWS = 1_000_000
 DEFAULT_SWEEP_INTERVAL_S = 1.0
 DEFAULT_MAX_REJECT_DETAILS = 100_000
 DEFAULT_OUTPUT_ROOT = "ingestion-output"
+DEFAULT_KAFKA_TOPIC = "flows.normalized"
 
 ENV_PREFIX = "NETGUARD_INGEST_"
 
@@ -64,6 +65,9 @@ class IngestionConfig:
     validate_contract: bool = field(default_factory=lambda: _env_bool("VALIDATE_CONTRACT", True))
     contracts_dir: Path | None = field(default_factory=lambda: Path(_env("CONTRACTS_DIR")) if _env("CONTRACTS_DIR") else None)
     max_reject_details: int = field(default_factory=lambda: _env_int("MAX_REJECT_DETAILS", DEFAULT_MAX_REJECT_DETAILS))
+    # Kafka publishing (off unless bootstrap servers are configured)
+    kafka_bootstrap_servers: str | None = field(default_factory=lambda: _env("KAFKA_BOOTSTRAP_SERVERS"))
+    kafka_topic: str = field(default_factory=lambda: _env("KAFKA_TOPIC") or DEFAULT_KAFKA_TOPIC)
 
     def validate(self) -> None:
         """Raise ``ValueError`` for impossible settings."""
@@ -79,6 +83,8 @@ class IngestionConfig:
             raise ValueError("max_reject_details must be >= 0")
         if self.input_format not in (None, "csv", "jsonl"):
             raise ValueError("input_format must be 'csv' or 'jsonl'")
+        if not self.kafka_topic:
+            raise ValueError("kafka_topic must not be empty")
 
     def as_report_dict(self) -> dict[str, Any]:
         data = asdict(self)

@@ -7,7 +7,8 @@ Sub-commands:
   validate-output  re-check a flows.jsonl file against FlowEvent v1
 
 Exit codes: 0 success (incl. completed with rejections), 1 at least one
-ingestion FAILED, 2 usage error, 3 rejections present with --fail-on-rejections.
+ingestion FAILED, 2 usage error, 3 rejections present with --fail-on-rejections,
+4 flows written to files but not all delivered to Kafka.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from . import TOOL_NAME, __version__
 from .config import (DEFAULT_ACTIVE_TIMEOUT_S, DEFAULT_IDLE_TIMEOUT_S, DEFAULT_MAX_ACTIVE_FLOWS,
                      DEFAULT_MAX_REJECT_DETAILS, IngestionConfig)
 from .contract import ContractUnavailable, FlowEventContract
+from .kafka_sink import KafkaFlowPublisher, KafkaUnavailable
 from .logging_setup import configure_logging
 from .output import read_catalogue
 from .pipeline import STATUS_FAILED, IngestionResult, ingest_flow_dataset, ingest_pcap
@@ -40,6 +42,11 @@ def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-reject-details", type=int,
                         help=f"max rejects written per ingestion (default {DEFAULT_MAX_REJECT_DETAILS}); all are counted")
     parser.add_argument("--fail-on-rejections", action="store_true", help="exit 3 when anything was rejected")
+    parser.add_argument("--kafka-bootstrap-servers",
+                        help="also publish every flow to Kafka (default: $NETGUARD_INGEST_KAFKA_BOOTSTRAP_SERVERS; "
+                        "unset = files only)")
+    parser.add_argument("--kafka-topic", help="Kafka topic (default: $NETGUARD_INGEST_KAFKA_TOPIC or flows.normalized)")
+    parser.add_argument("--no-kafka", action="store_true", help="never publish to Kafka, even if configured")
     parser.add_argument("--json", action="store_true", help="print the full report(s) as JSON on stdout")
 
 
@@ -86,7 +93,8 @@ def _config_from_args(args: argparse.Namespace) -> IngestionConfig:
                        ("max_active_flows", "max_active_flows"), ("max_reject_details", "max_reject_details"),
                        ("dataset_id", "dataset_id"), ("scenario_label", "scenario_label"),
                        ("format", "input_format"), ("mapping", "mapping_profile"),
-                       ("assume_timezone", "assume_timezone"), ("contracts_dir", "contracts_dir")):
+                       ("assume_timezone", "assume_timezone"), ("contracts_dir", "contracts_dir"),
+                       ("kafka_bootstrap_servers", "kafka_bootstrap_servers"), ("kafka_topic", "kafka_topic")):
         value = getattr(args, attr, None)
         if value is not None:
             setattr(config, name, value)
@@ -94,6 +102,8 @@ def _config_from_args(args: argparse.Namespace) -> IngestionConfig:
         config.emit_other_protocols = True
     if args.no_contract_validation:
         config.validate_contract = False
+    if args.no_kafka:
+        config.kafka_bootstrap_servers = None
     config.validate()
     return config
 
@@ -126,6 +136,9 @@ def _print_result(result: IngestionResult) -> None:
     print(f"  flows: extracted={f['extracted']} normalized={f['normalized']} rejected={f['rejected']}")
     if report["rejections"]["by_code"]:
         print("  rejections: " + ", ".join(f"{k}={v}" for k, v in report["rejections"]["by_code"].items()))
+    kafka = report.get("kafka", {})
+    if kafka.get("enabled"):
+        print(f"  kafka: topic={kafka['topic']} delivered={kafka['delivered']}/{kafka['produced']}")
     for warning in report["warnings"]:
         print(f"  warning: {warning}")
     if report["error"]:
@@ -143,10 +156,17 @@ def _run_ingest(args: argparse.Namespace) -> int:
         print("No input files given: no data has been imported.", file=sys.stderr)
         return 1
     ingest = ingest_pcap if args.command == "pcap" else ingest_flow_dataset
+    publisher = None
+    if config.kafka_bootstrap_servers:
+        try:
+            publisher = KafkaFlowPublisher(config.kafka_bootstrap_servers, config.kafka_topic)
+        except KafkaUnavailable as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     results = []
     for path in inputs:
         try:
-            results.append(ingest(path, config))
+            results.append(ingest(path, config, publisher))
         except ContractUnavailable as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
@@ -159,6 +179,8 @@ def _run_ingest(args: argparse.Namespace) -> int:
         return 1
     if args.fail_on_rejections and any(r.report["rejections"]["total"] for r in results):
         return 3
+    if any(r.report["kafka"].get("enabled") and not r.report["kafka"]["complete"] for r in results):
+        return 4
     return 0
 
 

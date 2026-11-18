@@ -167,9 +167,11 @@ def genuine_tcp_flow(config) -> NormalizedFlow:
     """The client->server flow extracted from the genuine tcp_handshake capture."""
     from netguard_ingest.pipeline import ingest_pcap
     from conftest import read_jsonl
-    event = read_jsonl(ingest_pcap(genuine("tcp_handshake.pcapng"), config).output_dir / "flows.jsonl")[0]
+    output_dir = ingest_pcap(genuine("tcp_handshake.pcapng"), config).output_dir
+    event = read_jsonl(output_dir / "flows.jsonl")[0]
+    flow_id = read_jsonl(output_dir / "provenance.jsonl")[0]["flow_id"]
     return NormalizedFlow(
-        flow_id=event["flow_id"], start_time=parse_timestamp(event["start_time"]), duration_ms=event["duration_ms"],
+        flow_id=flow_id, start_time=parse_timestamp(event["start_time"]), duration_ms=event["duration_ms"],
         src_ip=event["src_ip"], src_port=event["src_port"], dst_ip=event["dst_ip"], dst_port=event["dst_port"],
         protocol=Protocol(event["protocol"]), packets=event["packets"], bytes=event["bytes"],
         tcp_flags=event["tcp_flags"], source_type=SourceType.PCAP, scenario_label=None)

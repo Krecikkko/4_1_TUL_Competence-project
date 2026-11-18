@@ -45,6 +45,23 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+# The ten fields of contracts/kafka/flow-event.v1.schema.json, in contract order.
+FLOW_EVENT_FIELDS = ["start_time", "duration_ms", "src_ip", "src_port", "dst_ip", "dst_port", "protocol",
+                     "packets", "bytes", "tcp_flags"]
+
+
+def native_records(output_dir: Path) -> list[dict]:
+    """A NetGuard-native export of one ingestion: each FlowEvent joined with the
+    identifiers/labels its provenance record holds (flows.jsonl and
+    provenance.jsonl are written line by line in the same order)."""
+    flows = read_jsonl(output_dir / "flows.jsonl")
+    provenance = read_jsonl(output_dir / "provenance.jsonl")
+    assert len(flows) == len(provenance)
+    return [{**flow, "flow_id": prov["flow_id"], "source_type": prov["source_type"],
+             "scenario_label": prov["scenario_label"], "dataset_id": prov["dataset_id"]}
+            for flow, prov in zip(flows, provenance)]
+
+
 def independent_packets(path: Path):
     """Packets via dpkt's own high-level readers (independent reference)."""
     with open(path, "rb") as handle:

@@ -1,7 +1,8 @@
 # HOW TO RUN — NetGuard PCAP/flow ingestion
 
 All commands are run from `modules/pcap-importer/` unless stated otherwise.
-No Docker, Kafka, database or network access is needed to ingest files.
+No Docker, Kafka, database or network access is needed to ingest files;
+publishing to Kafka is optional (§10), and so is running in Docker (§11).
 
 ## 1. Requirements
 
@@ -121,6 +122,9 @@ CLI options override environment variables, which override the defaults.
 | JSON Schema check per flow | `--no-contract-validation` | `NETGUARD_INGEST_VALIDATE_CONTRACT` | on |
 | Contract directory | `--contracts-dir` | `NETGUARD_INGEST_CONTRACTS_DIR` | auto-detected `contracts/kafka` |
 | Max reject details written | `--max-reject-details` | `NETGUARD_INGEST_MAX_REJECT_DETAILS` | `100000` (all are still counted) |
+| Kafka bootstrap servers | `--kafka-bootstrap-servers` | `NETGUARD_INGEST_KAFKA_BOOTSTRAP_SERVERS` | unset = files only |
+| Kafka topic | `--kafka-topic` | `NETGUARD_INGEST_KAFKA_TOPIC` | `flows.normalized` |
+| Disable Kafka for one run | `--no-kafka` | – | – |
 | Logging | `--log-level`, `--log-format text\|json` | – | `INFO`, `text` (stderr) |
 
 Put global options before the sub-command:
@@ -130,7 +134,7 @@ Put global options before the sub-command:
 
 ```bash
 cd modules/pcap-importer
-python -m pytest            # 178 tests, about 3 s
+python -m pytest            # 184 tests, about 3 s
 python -m pytest -v tests/test_flow_aggregation.py
 ```
 
@@ -151,9 +155,37 @@ result = ingest_pcap("capture.pcapng", IngestionConfig(output_root=Path("out"), 
 print(result.status, result.output_dir, result.report["flows"])
 ```
 
-## 10. Handing flows to Kafka (other team members)
+## 10. Publishing flows to Kafka
 
-This subsystem writes JSON-lines only. Each line of `flows.jsonl` is
-a complete, schema-validated FlowEvent v1 message. The Flow Processor or DevOps
-owner can publish the lines to `flows.normalized`. Use key `src_ip` as proposed,
-and keep `event_id` / `flow_id` unchanged so consumers can deduplicate.
+Every line of `flows.jsonl` is a complete, schema-validated FlowEvent v1
+message. To also publish them to `flows.normalized`, give the broker address
+(with the repository's Kafka running: `docker compose up -d kafka kafka-init`
+from the repository root):
+
+```bash
+python -m netguard_ingest pcap tests/data/pcap/dns.cap --kafka-bootstrap-servers localhost:9094
+```
+
+`localhost:9094` is the broker's host-side listener; inside the compose network
+it is `kafka:9092`. Messages are keyed by `src_ip` and carry the headers
+`netguard-flow-id`, `netguard-ingestion-id`, `netguard-source-type` and
+`netguard-dataset-id`. The summary line `kafka: ... delivered=N/N` and
+`report.json` → `kafka` show the delivery result; exit code **4** means the
+files were written but not every flow reached Kafka.
+
+## 11. Running in Docker (compose)
+
+The repository's `compose.yaml` has a `pcap-importer` service behind the
+`importer` profile, so a plain `docker compose up` never re-imports captures.
+From the repository root:
+
+```bash
+cp my-capture.pcapng data/pcap-input/
+docker compose run --rm pcap-importer                       # import everything in data/pcap-input
+docker compose run --rm pcap-importer pcap /data/input/my-capture.pcapng --dataset-id lab-1
+docker compose run --rm pcap-importer list                  # previous ingestions
+```
+
+The container publishes to `kafka:9092`, topic `flows.normalized`. Output files
+go to the named volume `ingestion_output` (mounted at `/data/output`).
+`data/pcap-input` is mounted read-only at `/data/input`.

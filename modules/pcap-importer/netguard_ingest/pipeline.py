@@ -25,8 +25,10 @@ from .config import IngestionConfig
 from .contract import FlowEventContract
 from .datasets.mapping import MappingProfile
 from .datasets.reader import RecordError, detect_dataset_format, iter_csv, iter_jsonl
+from .kafka_sink import (HEADER_DATASET_ID, HEADER_FLOW_ID, HEADER_INGESTION_ID, HEADER_SOURCE_TYPE,
+                         KafkaFlowPublisher)
 from .errors import ErrorCode, InputFileError, PacketRejected, RejectRecord, ValidationIssue, category_of
-from .ids import dataset_flow_id, default_dataset_id, event_id_for, file_sha256, new_ingestion_id, pcap_flow_id
+from .ids import dataset_flow_id, default_dataset_id, file_sha256, new_ingestion_id, pcap_flow_id
 from .logging_setup import get_logger
 from .model import NormalizedFlow, Protocol, SourceType
 from .normalize import UTC, format_timestamp, normalize_scenario_label, ns_to_datetime
@@ -61,7 +63,8 @@ def _json_safe(value: Any, limit: int = 2048) -> Any:
 class _IngestionRun:
     """State, statistics and output handling for one ingestion operation."""
 
-    def __init__(self, path: str | Path, source_type: SourceType, config: IngestionConfig) -> None:
+    def __init__(self, path: str | Path, source_type: SourceType, config: IngestionConfig,
+                 publisher: KafkaFlowPublisher | None = None) -> None:
         config.validate()
         self.config = config
         self.path = Path(path)
@@ -81,6 +84,9 @@ class _IngestionRun:
         self.fatal: dict[str, Any] | None = None
         self.contract = FlowEventContract(config.contracts_dir) if config.validate_contract else None
         self.output = IngestionOutput(config.output_root, self.ingestion_id, config.max_reject_details)
+        self.publisher = publisher
+        if publisher is not None:
+            publisher.begin()
         self.log.info("ingestion started source_type=%s file=%s", source_type.value, self.path)
 
     # ------------------------------------------------------------ helpers
@@ -106,7 +112,7 @@ class _IngestionRun:
         self.output.write_reject(record.to_dict(self.ingestion_id, str(self.path)))
 
     def emit(self, flow: NormalizedFlow, provenance: dict[str, Any], location: dict[str, Any]) -> bool:
-        """Validate, serialise, contract-check and write one flow."""
+        """Validate, serialise, contract-check, write and (optionally) publish one flow."""
         try:
             validate_flow(flow)
         except ValidationIssue as issue:
@@ -114,8 +120,7 @@ class _IngestionRun:
             self.reject(RejectRecord(issue.code, issue.message, location, issue.field, issue.value,
                                      details={"flow_id": flow.flow_id}))
             return False
-        event = flow.to_flow_event(event_id=event_id_for(flow.flow_id), trace_id=self.ingestion_id,
-                                   ingest_time=self.started_at)
+        event = flow.to_flow_event()
         if self.contract is not None:
             errors = self.contract.errors(event)
             if errors:
@@ -123,7 +128,13 @@ class _IngestionRun:
                 self.reject(RejectRecord(ErrorCode.CONTRACT_VIOLATION, "FlowEvent v1 contract violated",
                                          location, details={"flow_id": flow.flow_id, "errors": errors}))
                 return False
+        # Fields outside the slim FlowEvent contract are kept in provenance.
+        provenance = {**provenance, "dataset_id": flow.dataset_id, "scenario_label": flow.scenario_label}
         self.output.write_flow(event, provenance)
+        if self.publisher is not None:
+            self.publisher.publish(event, {HEADER_FLOW_ID: flow.flow_id, HEADER_INGESTION_ID: self.ingestion_id,
+                                           HEADER_SOURCE_TYPE: flow.source_type.value,
+                                           HEADER_DATASET_ID: flow.dataset_id})
         self.flows_normalized += 1
         return True
 
@@ -137,6 +148,13 @@ class _IngestionRun:
             self.log.exception("ingestion failed with an unexpected error")
 
     def finish(self, source_details: dict[str, Any], sections: dict[str, Any]) -> IngestionResult:
+        kafka: dict[str, Any] = {"enabled": False}
+        if self.publisher is not None:
+            kafka = self.publisher.end()
+            if not kafka["complete"]:
+                self.warnings.append(
+                    f"Kafka publishing incomplete: {kafka['delivered']} of {kafka['produced']} flow events "
+                    f"delivered to {kafka['topic']} (errors: {kafka['errors']})")
         completed_at = datetime.now(UTC)
         total_rejections = sum(self.rejections.values())
         if self.fatal is not None:
@@ -187,6 +205,7 @@ class _IngestionRun:
             "warnings": self.warnings,
             "contract": {"validated": self.contract is not None,
                          "schema": str(self.contract.schema_path) if self.contract else None},
+            "kafka": kafka,
             "outputs": {"flows": "flows.jsonl", "provenance": "provenance.jsonl", "rejects": "rejects.jsonl",
                         "report": "report.json"},
         }
@@ -204,9 +223,10 @@ class _IngestionRun:
 
 
 # =============================================================== PCAP pipeline
-def ingest_pcap(path: str | Path, config: IngestionConfig) -> IngestionResult:
+def ingest_pcap(path: str | Path, config: IngestionConfig,
+                publisher: KafkaFlowPublisher | None = None) -> IngestionResult:
     """Import one prepared PCAP/PCAPNG capture."""
-    run = _IngestionRun(path, SourceType.PCAP, config)
+    run = _IngestionRun(path, SourceType.PCAP, config, publisher)
     capture_info: dict[str, Any] = {}
     packets = Counter()
     unsupported = {"link_types": Counter(), "network_types": Counter(), "ip_protocols": Counter()}
@@ -371,9 +391,10 @@ def _emit_pcap_flow(run: _IngestionRun, state: FlowState, label: str | None, abn
 
 
 # ============================================================ dataset pipeline
-def ingest_flow_dataset(path: str | Path, config: IngestionConfig) -> IngestionResult:
+def ingest_flow_dataset(path: str | Path, config: IngestionConfig,
+                        publisher: KafkaFlowPublisher | None = None) -> IngestionResult:
     """Import one prepared flow dataset (CSV or JSON-lines) via a mapping profile."""
-    run = _IngestionRun(path, SourceType.FLOW_DATASET, config)
+    run = _IngestionRun(path, SourceType.FLOW_DATASET, config, publisher)
     records = Counter()
     unmapped: Counter[str] = Counter()
     details: dict[str, Any] = {}

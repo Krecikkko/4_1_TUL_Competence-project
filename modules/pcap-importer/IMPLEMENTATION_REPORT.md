@@ -85,7 +85,7 @@ classes.
 | IP addresses | IPv4 dotted quad; IPv6 RFC 5952 lower-case; IPv4-mapped as `::ffff:a.b.c.d` on every Python version |
 | Missing vs zero | empty cell / `null` means unavailable and is never turned into `0` |
 | `tcp_flags` | bitwise OR of observed flags; `null` for non-TCP |
-| Identifiers | `flow_id`, `event_id` deterministic (UUIDv5); `trace_id` = ingestion id |
+| Identifiers | `flow_id` deterministic (UUIDv5), `ingestion_id` per run; both in `provenance.jsonl` and Kafka headers, not in the slim FlowEvent |
 
 ## 5. Tests executed
 
@@ -116,7 +116,7 @@ Every capture in `tests/data/pcap/` was imported with the CLI, then checked:
 agree with `report.json`, examined packets = packets in flows + rejected
 packets, and each `flows.jsonl` re-imports as a NetGuard-native dataset with
 status `COMPLETED`. Output was identical on Python 3.11.18 and 3.12.10 (apart
-from `trace_id` and `ingest_time`).
+from `ingestion_id` in provenance).
 
 | Capture | Packets | Flows | Rejected | Reason |
 |---|---:|---:|---:|---|
@@ -187,9 +187,8 @@ Options: `--idle-timeout`, `--active-timeout`, `--max-active-flows`,
 
 ## 8. Deviations
 
-* Output is JSON-lines files only; publishing to Kafka topic `flows.normalized`
-  is left to the Flow Processor. Each line is already a validated FlowEvent v1
-  message.
+* Publishing to Kafka topic `flows.normalized` is optional (configured bootstrap
+  servers); JSON-lines files are always written.
 * No time-window features (pps, bps, unique ports/IPs, new-connection rate);
   these belong downstream.
 * Only the `netguard-native` mapping profile is included.
@@ -205,8 +204,3 @@ Options: `--idle-timeout`, `--active-timeout`, `--max-active-flows`,
 * Link types and formats listed in §5 "Not tested on genuine data".
 * NFR01 (5,000 flows/s for 5 minutes) has not been load-tested; no large
   genuine capture was available. Short-run throughput is in §6.
-* `contracts/kafka/examples/flow.valid.json` is not valid JSON (trailing comma
-  after `"tcp_flags": 24`). Four tests in `tests/test_kafka_example_contracts.py`
-  at the repository root fail because of it. The file is outside this module
-  and was left unchanged; this module uses
-  `contracts/kafka/flow-event.v1.schema.json` only, which is valid.

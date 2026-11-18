@@ -1,9 +1,10 @@
 """Identifiers and content hashing used for provenance and repeatability.
 
-* ``flow_id`` and ``event_id`` are deterministic (UUIDv5) functions of the
-  input file's SHA-256 and the originating packet/record, so re-ingesting the
-  same file with the same configuration yields identical identifiers.
-* ``ingestion_id`` is unique per run (UUIDv4) and is used as ``trace_id``.
+* ``flow_id`` is a deterministic (UUIDv5) function of the input file's
+  SHA-256 and the originating packet/record, so re-ingesting the same file
+  with the same configuration yields identical identifiers.
+* ``ingestion_id`` is unique per run (UUIDv4) and traces every flow back to
+  its ingestion (provenance.jsonl, Kafka header ``netguard-ingestion-id``).
 """
 from __future__ import annotations
 
@@ -35,10 +36,6 @@ def pcap_flow_id(sha256: str, first_packet_index: int, key: tuple) -> str:
 
 def dataset_flow_id(sha256: str, record_number: int) -> str:
     return "flow-" + str(uuid.uuid5(NETGUARD_INGEST_NAMESPACE, f"dataset|{sha256}|{record_number}"))
-
-
-def event_id_for(flow_id: str) -> str:
-    return "evt-" + str(uuid.uuid5(NETGUARD_INGEST_NAMESPACE, f"event|{flow_id}"))
 
 
 def default_dataset_id(path: Path, sha256: str) -> str:

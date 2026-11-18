@@ -11,3 +11,7 @@ build/
 .venv/
 django-suser.txt
 .vscode/
+
+# Captures dropped in for the pcap-importer service (not committed)
+data/pcap-input/*
+!data/pcap-input/.gitkeep

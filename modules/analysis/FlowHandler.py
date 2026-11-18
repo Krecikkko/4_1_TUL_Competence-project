@@ -37,13 +37,13 @@ class FlowProcessor:
                     self.flowData.flowPatternData.AvgPacketAmount[i]-= 1
                     self.flowData.shouldSendPatternAlerts[i] = True
                     if(i == 2): #check if the biggest window has no data, it means we can remove record to save memory for long term usability
-                        if(checkedFlow.scr_ip != Config.serviceIp):
-                            self.CheckToClearRecord(checkedFlow.scr_ip)
+                        if(checkedFlow.src_ip != Config.serviceIp):
+                            self.CheckToClearRecord(checkedFlow.src_ip)
                         else:
                             self.CheckToClearRecord(checkedFlow.dst_ip)
                 else:
                     break
-        flowIpProfile: FlowDetectionData = self.flowData.IPRegistry[flow.scr_ip] 
+        flowIpProfile: FlowDetectionData = self.flowData.IPRegistry[flow.src_ip] 
         #rule based detection
         if(markToCheck.PortScan):
             for i in range(0,2):
@@ -116,19 +116,19 @@ class FlowProcessor:
             e = window
         for i in range(b,e):
             self.flowData.flowPatternData.TotalPacketSize[i] += flow.bytes * incoming
-        if(flow.scr_ip != Config.serviceIp): #check if the packet is from service or client - here client
-            if(self.flowData.IPRegistry[flow.scr_ip] == None):
+        if(flow.src_ip != Config.serviceIp): #check if the packet is from service or client - here client
+            if(self.flowData.IPRegistry[flow.src_ip] == None):
                 self.flowDetectionData = FlowDetectionData()
-                self.flowData.IPRegistry[flow.scr_ip] = self.flowDetectionData
+                self.flowData.IPRegistry[flow.src_ip] = self.flowDetectionData
             else:
-                flowDetectionData = self.flowData.IPRegistry[flow.scr_ip]
+                flowDetectionData = self.flowData.IPRegistry[flow.src_ip]
             self.FlagExtractor(flow.tcp_flags)
-            if(flow.protocol == 6): #protocol 6 is TCP
+            if(flow.protocol == "TCP"):
                 if Flags.SYN in self.flowFlags or Flags.FIN in self.flowFlags or self.flowFlags.count == 0:
                     self.ModifyAccesedPorts(flow,self.flowDetectionData,window,incoming)
-            if(flow.protocol == 1): #protocol 1 is IMCP
+            if(flow.protocol == "ICMP"):
                     self.ModifyAccesedPorts(flow,self.flowDetectionData,window,incoming)
-            if(flow.protocol == 6):
+            if(flow.protocol == "TCP"):
                     if Flags.SYN in self.flowFlags: #check if connection was open
                         for i in range(b,e):
                             self.flowDetectionData.OpenConnection[i] += incoming
@@ -146,12 +146,12 @@ class FlowProcessor:
                                 self.flowData.flowPatternData.Brute[i].Low(self.flowDetectionData.PSHAmount[i] + 1)
                         self.markToCheck.DoSHulk = True
         else:  #packet is from service
-            if(self.flowData.IPRegistry[flow.scr_ip] == None):
+            if(self.flowData.IPRegistry[flow.src_ip] == None):
                 flowDetectionData = FlowDetectionData()
-                self.flowData.IPRegistry[flow.scr_ip] = flowDetectionData
+                self.flowData.IPRegistry[flow.src_ip] = flowDetectionData
             else:
                 flowDetectionData = self.flowData.IPRegistry[flow.dst_ip]
-            if(flow.protocol == 6):
+            if(flow.protocol == "TCP"):
                 if Flags.FIN in self.flowFlags or Flags.RST in self.flowFlags: # check if connection was terminated by server
                     for i in range(b,e):
                         flowDetectionData.ClosedConnection[i] += incoming
@@ -168,7 +168,7 @@ class FlowProcessor:
         return
 
     def FlagExtractor(self,flagInt:int):
-        flags = flagInt
+        flags = flagInt or 0  # null for non-TCP flows (FlowEvent v1)
         div = 256
         flowFlags = []
         while(flags > 0):
@@ -181,12 +181,12 @@ class FlowProcessor:
         self.markToCheck.PortScan = True
         if(incoming == 1):
             for i in range(0,2):
-                    flowDetectionData.PortList[i].add(flow.dstport)
+                    flowDetectionData.PortList[i].add(flow.dst_port)
                     if(len(set(flowDetectionData.PortList)) > flowDetectionData.AccesedPortsAmount[i]):
                         self.flowData.flowPatternData.PortStats[i].Add(flowDetectionData.AccesedPortsAmount[i])
                         flowDetectionData.AccesedPortsAmount[i] = len(set(flowDetectionData.PortList))
         else:
-            flowDetectionData.PortList[table].remove(flow.dstport,1)
+            flowDetectionData.PortList[table].remove(flow.dst_port,1)
             if(len(set(flowDetectionData.PortList)) < flowDetectionData.AccesedPortsAmount[table]):
                 self.flowData.flowPatternData.PortStats[table].Low(flowDetectionData.AccesedPortsAmount[table])
                 flowDetectionData.AccesedPortsAmount[table] = len(set(flowDetectionData.PortList))

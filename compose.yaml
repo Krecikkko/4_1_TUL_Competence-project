@@ -7,7 +7,8 @@ include:
 # All services share the `netguard` network (declared in the included Kafka
 # file), so containers reach each other by service name:
 #   kafka:9092, postgres:5432, backend:8000, frontend:80
-# Future modules (e.g. analysis, importer) are added below in the same way.
+# Future modules (e.g. analysis) are added below in the same way; the
+# pcap-importer is opt-in via the "importer" profile.
 
 services:
 
@@ -120,5 +121,38 @@ services:
 
     restart: "no"
 
+  # PCAP / flow-dataset importer (modules/pcap-importer). A batch job, not a
+  # long-running service: it sits behind the "importer" profile so a plain
+  # `docker compose up` does not re-import (and re-publish) the same captures.
+  #   docker compose run --rm pcap-importer                   # every file in ./data/pcap-input
+  #   docker compose run --rm pcap-importer pcap /data/input/x.pcapng
+  #   docker compose run --rm pcap-importer list
+  pcap-importer:
+    build:
+      context: ./modules/pcap-importer
+      additional_contexts:
+        contracts: ./contracts/kafka
+    profiles: ["importer"]
+
+    environment:
+      NETGUARD_INGEST_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NETGUARD_INGEST_KAFKA_TOPIC: flows.normalized
+
+    volumes:
+      - ./data/pcap-input:/data/input:ro
+      - ingestion_output:/data/output
+
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+    networks:
+      - netguard
+
+    restart: "no"
+
 volumes:
   postgres_data:
+  ingestion_output:
