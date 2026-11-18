@@ -1,13 +1,20 @@
+import os
+
 from kafkaReciever import FlowReceiver
 from FlowHandler import FlowProcessor
 from kafkaProducer import AlertProducer
 from AlertCrafter import *
 
+# localhost:9094 is the broker's host-side listener; inside the compose
+# network use KAFKA_BOOTSTRAP_SERVERS=kafka:9092.
+BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094")
+
+
 def main():
 
     # Initialize Kafka receiver
     flow_receiver = FlowReceiver(
-        bootstrap_servers="localhost:9094",
+        bootstrap_servers=BOOTSTRAP_SERVERS,
         group_id="netguard-analysis",
         topic="flows.normalized"
     )
@@ -17,7 +24,7 @@ def main():
     alert_crafter = AlertCrafterLogic()
     # Initialize Kafka producer
     alert_producer = AlertProducer(
-        bootstrap_servers="localhost:9094",
+        bootstrap_servers=BOOTSTRAP_SERVERS,
         topic="detections.created"
     )
 

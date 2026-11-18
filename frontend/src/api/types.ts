@@ -17,8 +17,9 @@ export interface NetworkFlow {
   duration_us: string
   source_ip: string
   destination_ip: string
-  source_port: number
-  destination_port: number
+  /** null for protocols without ports (ICMP, ICMPV6, OTHER) */
+  source_port: number | null
+  destination_port: number | null
   protocol: string
   packet_count: number
   byte_count: number

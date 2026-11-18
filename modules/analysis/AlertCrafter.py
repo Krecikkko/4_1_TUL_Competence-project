@@ -17,7 +17,7 @@ class AlertCrafterLogic:
         alertData.rule_id = alertType.name
         alertData.severity = severity
         alertData.confidence = confidence
-        alertData.src_ip = flow.scr_ip
+        alertData.src_ip = flow.src_ip
         alertData.dst_ip = flow.dst_ip
         alertData.timestamp = str(time())
         alertData.window_start = str(TimeUtils.add(TimeUtils.parse(flow.start_time),-windowType,0))

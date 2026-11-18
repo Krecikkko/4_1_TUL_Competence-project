@@ -8,15 +8,17 @@ class NetworkFlow(models.Model):
     source_ip = models.GenericIPAddressField()
     destination_ip = models.GenericIPAddressField()
 
-    source_port = models.PositiveIntegerField()
-    destination_port = models.PositiveIntegerField()
+    # null for protocols without ports (ICMP, ICMPV6, OTHER), as in FlowEvent v1
+    source_port = models.PositiveIntegerField(null=True, blank=True)
+    destination_port = models.PositiveIntegerField(null=True, blank=True)
 
     protocol = models.CharField(max_length=10)
 
     packet_count = models.PositiveBigIntegerField()
     byte_count = models.PositiveBigIntegerField()
 
-    tcp_flags = models.PositiveSmallIntegerField()
+    # null for non-TCP flows, as in FlowEvent v1
+    tcp_flags = models.PositiveSmallIntegerField(null=True, blank=True)
 
     def __str__(self):
         return (
